@@ -408,16 +408,3 @@ export_video(
 ```
 
 ---
-
-## 17. Summary
-
-This simulator provides a compact but expressive synthetic video pipeline combining:
-
-- analytic flow advection,
-- particle and field representations,
-- physically inspired intensity rendering,
-- optional camera/noise model,
-- export utilities for quick visual inspection.
-
-It is suitable for data generation, inverse-problem prototyping, and algorithm testing where fully real fluid simulation is unnecessary.
-
