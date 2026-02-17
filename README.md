@@ -373,7 +373,7 @@ export_video(
 )
 ```
 ---
-## About Forward Goal-2 Pipeline Simulator (`pipeline_forward.py`) ($Hongze$ $Lin$)
+## About Forward Pipeline Simulator (`pipeline_forward.py`) ($Hongze$ $Lin$)
 
 ## 1. Overview
 
