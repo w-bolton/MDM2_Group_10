@@ -2,8 +2,7 @@
 Repository for MDM Group 10 Project 2
 
 ---
-## About Forward Flow-Dye Simulator (`simulate_forward.py`) (Hongze Lin)
-
+## About Forward Flow-Dye Simulator (`simulate_forward.py`) ($Hongze$ $Lin$)
 ## 1. What This Script Does
 
 `simulate_forward.py` implements a **forward simulator** that generates a synthetic grayscale video from a simplified flow field model and a dye field transport model.
@@ -19,7 +18,7 @@ In short, for each time step, it:
 
 The script is self-contained and intended for simulation/prototyping workflows where you need synthetic flow videos.
 
----
+
 
 ## 2. High-Level Mathematical Model
 
@@ -42,7 +41,7 @@ where:
 Particles are advanced with **RK2 (midpoint)** integration.
 The dye field is advanced with **semi-Lagrangian backtracing** + optional diffusion.
 
----
+
 
 ## 3. File Structure (Inside `simulate_forward.py`)
 
@@ -89,7 +88,7 @@ The code is organized into these sections:
    - `resolve_output_options(...)`
    - `main(...)`
 
----
+
 
 ## 4. Core Data Structures
 
@@ -140,7 +139,7 @@ The code is organized into these sections:
 - `y`: out-of-plane coordinate, shape `(N,)`
 - `c`: dye concentration field, shape `(H, W)`
 
----
+
 
 ## 5. Time-Step Pipeline in Detail
 
@@ -170,7 +169,7 @@ At each frame index `n`:
 5. **Diagnostics**
    - Record per-frame `I_min`, `I_max`, `I_mean`, and visible fraction.
 
----
+
 
 ## 6. Boundary and Numerical Behavior
 
@@ -188,7 +187,7 @@ At each frame index `n`:
 
 `bilinear_sample` computes four-corner interpolation weights on grid indices and supports periodic/non-periodic `x`.
 
----
+
 
 ## 7. Initialization Details
 
@@ -206,7 +205,7 @@ At each frame index `n`:
   - `zs`: inclusive linear spacing in `z`
 - Initializes dye concentration with a Gaussian blob example.
 
----
+
 
 ## 8. Rendering Model Explained
 
@@ -227,7 +226,7 @@ For each grid point:
 - Intensity term: `I = dye_beta * c * L * exp(-dye_alpha * d * c)`.
 - Blur for smooth appearance.
 
----
+
 
 ## 9. Camera and Exposure
 
@@ -246,7 +245,7 @@ There are two frame-conversion paths:
 
 When `auto_exposure=True`, the script uses auto-exposure regardless of camera flag.
 
----
+
 
 ## 10. Outputs
 
@@ -274,7 +273,6 @@ Files include:
 
 If MP4 writing fails, warning suggests installing `imageio-ffmpeg`.
 
----
 
 ## 11. Command-Line Usage
 
@@ -319,7 +317,6 @@ Format behavior rule:
 - If neither `--gif` nor `--mp4` is provided, both are saved.
 - If either flag is provided, only the selected formats are saved.
 
----
 
 ## 12. Reproducibility Notes
 
@@ -330,7 +327,6 @@ Format behavior rule:
   - same config values
   - same execution order
 
----
 
 ## 13. Performance Considerations
 
@@ -346,7 +342,6 @@ Ways to speed up:
 - Lower blur sigmas if visually acceptable.
 - Profile hot paths before introducing optimization complexity.
 
----
 
 ## 14. Safe Extension Points
 
@@ -360,35 +355,8 @@ If you want to extend behavior while preserving overall architecture:
 
 Because the simulator is modular, these can be changed with minimal impact on CLI/export.
 
----
 
-## 15. Troubleshooting
-
-### Problem: Output looks too dark
-
-- Keep auto-exposure on (default).
-- Increase `particle_amp` or `dye_beta`.
-- Reduce `dye_alpha` if dye decays visually too fast with distance.
-
-### Problem: Motion appears weak
-
-- Increase `A` or adjust `k`.
-- Increase `T` for longer sequence.
-
-### Problem: Too many particles disappear
-
-- Increase `y_kill`.
-- Reduce `y_noise_sigma`.
-- Increase `sheet_thickness` for visibility threshold.
-
-### Problem: MP4 not written
-
-- Install `imageio-ffmpeg`.
-- GIF and PNG snapshots should still be available.
-
----
-
-## 16. Quick API Example (Programmatic Use)
+## 15. API Example (Programmatic Use)
 
 ```python
 from simulate_forward import SimConfig, forward_simulator, export_video
@@ -408,5 +376,12 @@ export_video(
 ```
 
 ---
-## About `Outputs`
+## About `Outputs` ($Hongze$ $Lin$)
 The outputs videos of the `simulate_forward.py` in several form.
+
+---
+## About `MCS_research.md` ($Hongze$ $Lin$)
+- Simple research of what is Monto Carlo simulation
+- Bullet points of where to use this method and related reasons
+- How to use MCS in this MDM report
+
