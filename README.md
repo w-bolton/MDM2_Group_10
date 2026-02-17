@@ -700,17 +700,6 @@ If runtime is high, first reduce `H/W`, then `T`, then `N`.
 
 while preserving a similar flow of internal step functions.
 
-
-## 14. Quick Checklist
-
-When validating a run:
-
-1. `video.dtype == uint8`
-2. `video.shape == (T, H, W)`
-3. `diag` lists all have length `T`
-4. `Outputs_pipeline` contains expected files
-5. `vis_frac` values are within `[0,1]`
-
 ---
 ## About `Outputs` ($Hongze$ $Lin$)
 The outputs videos of the `simulate_forward.py` in several form.
