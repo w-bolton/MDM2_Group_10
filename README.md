@@ -343,9 +343,7 @@ Ways to speed up:
 - Profile hot paths before introducing optimization complexity.
 
 
-## 14. Safe Extension Points
-
-If you want to extend behavior while preserving overall architecture:
+## 14. Extension Points
 
 1. Replace velocity model in `vel_u_w`.
 2. Replace dye initial condition in `init_state`.
