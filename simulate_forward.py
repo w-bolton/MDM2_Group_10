@@ -403,8 +403,6 @@ def forward_simulator(cfg: SimConfig):
 
 def export_video(video_u8, out_dir: Path, fps=20, save_gif=True, save_mp4=True, base="sim"):
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Always save a few frames as PNG for quick sanity check
     try:
         import imageio.v2 as imageio
         imageio.imwrite(str(out_dir / f"{base}_frame0.png"), video_u8[0])
@@ -426,7 +424,6 @@ def export_video(video_u8, out_dir: Path, fps=20, save_gif=True, save_mp4=True, 
             imageio.mimsave(str(mp4_path), rgb, fps=fps)
         except Exception as e:
             print("[WARN] MP4 export failed (install imageio-ffmpeg). Error:", e)
-
 
 # =========================================================
 # CLI internal modules
