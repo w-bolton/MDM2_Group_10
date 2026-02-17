@@ -1,5 +1,7 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# =========================================================
+# simulate_forward function
+# - Hongze Lin
+# =========================================================
 
 import numpy as np
 from dataclasses import dataclass
