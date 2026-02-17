@@ -1,7 +1,17 @@
-# =========================================================
-# simulate_forward function
-# - Hongze Lin
-# =========================================================
+"""
+Forward simulator implementation
+-------------------------------
+This script implements the baseline forward simulator:
+
+(1) Dynamics  ->  (2) Rendering  ->  (3) Camera/Exposure  ->  (4) Export
+
+It uses the key state variables:
+xp, zp, y, c, xs, zs, I_p, I_d, I (and related parameters).
+
+Output is written to: <script_dir>/Outputs_simulate/
+
+- Hongze Lin
+"""
 
 import numpy as np
 from dataclasses import dataclass
@@ -425,6 +435,7 @@ def export_video(video_u8, out_dir: Path, fps=20, save_gif=True, save_mp4=True, 
         except Exception as e:
             print("[WARN] MP4 export failed (install imageio-ffmpeg). Error:", e)
 
+
 # =========================================================
 # CLI internal modules
 # =========================================================
@@ -435,7 +446,7 @@ def parse_cli_args():
     Isolating parser creation makes `main` focused on execution flow.
     """
     p = argparse.ArgumentParser(description="Forward simulator A(x0,theta)->video")
-    p.add_argument("--out", type=str, default="", help="output directory (default: script_dir/outputs)")
+    p.add_argument("--out", type=str, default="", help="output directory (default: script_dir/Outputs_simulate)")
     p.add_argument("--base", type=str, default="sim", help="base filename")
     p.add_argument("--fps", type=int, default=20)
     p.add_argument("--gif", action="store_true")
@@ -452,7 +463,7 @@ def resolve_output_options(args):
       - otherwise save only the explicitly requested formats
     """
     script_dir = Path(__file__).resolve().parent
-    out_dir = Path(args.out).expanduser().resolve() if args.out else (script_dir / "outputs")
+    out_dir = Path(args.out).expanduser().resolve() if args.out else (script_dir / "Outputs_simulate")
     save_gif = True if (not args.gif and not args.mp4) else args.gif
     save_mp4 = True if (not args.gif and not args.mp4) else args.mp4
     return out_dir, save_gif, save_mp4
