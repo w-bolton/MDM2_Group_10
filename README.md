@@ -3,7 +3,7 @@ Repository for MDM Group 10 Project 2
 
 ---
 ## About Forward Flow-Dye Simulator (`simulate_forward.py`) ($Hongze$ $Lin$)
-## 1. What This Script Does
+## 1. Main function of this script
 
 `simulate_forward.py` implements a **forward simulator** that generates a synthetic grayscale video from a simplified flow field model and a dye field transport model.
 
@@ -20,7 +20,7 @@ The script is self-contained and intended for simulation/prototyping workflows w
 
 
 
-## 2. High-Level Mathematical Model
+## 2. Mathematical Model
 
 The simulator uses a velocity field `(u, w)` in `(x, z)` coordinates:
 
