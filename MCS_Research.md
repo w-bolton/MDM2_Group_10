@@ -1,4 +1,4 @@
-# MCS_Research (Hongze Lin)
+# MCS_Research ($Hongze$ $Lin$)
 ---
 ## **About Monte Carlo simulation (MCS)**
 ---
