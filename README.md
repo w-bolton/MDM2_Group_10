@@ -2,7 +2,7 @@
 Repository for MDM Group 10 Project 2
 
 ---
-# Forward Flow-Dye Simulator (`simulate_forward.py`) — Detailed README
+## About Forward Flow-Dye Simulator (`simulate_forward.py`) (Hongze Lin)
 
 ## 1. What This Script Does
 
@@ -408,3 +408,5 @@ export_video(
 ```
 
 ---
+## About `Outputs`
+The outputs videos of the `simulate_forward.py` in several form.
