@@ -1,6 +1,6 @@
 # Mdm2_Group_10
 ---
-# About `forward_simulate.py` — Forward Simulator ($A(x0, θ) → b0:T$) ($Hongze$ $Lin$)
+# About `simulate_forward.py` — Forward Simulator ($A(x0, θ) → b0:T$) ($Hongze$ $Lin$)
 
 This script implements a **forward simulator** for the project: given an initial latent state (particles + dye) and a set of parameters, it generates a **synthetic camera video** (a stack of grayscale frames).
 
