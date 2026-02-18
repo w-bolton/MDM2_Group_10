@@ -132,7 +132,7 @@ Common exports:
 - key frames: `frame0.png`, `frame_mid.png`, `frame_last.png`
 ---
 
-# 2. About `forward_pipeline.py` ($Hongze$ $Lin$)
+# 2. About `pipeline_forward.py` ($Hongze$ $Lin$)
 ## — Explicit Forward Imaging Pipeline $(A(x0, θ) → b0:T)$ 
 
 This script implements a **physically structured forward pipeline** for the modelling project.  
