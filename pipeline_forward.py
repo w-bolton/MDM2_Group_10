@@ -256,11 +256,13 @@ def render_particles(xp, zp, amps, H, W, Lx, zmin, zmax, psf_sigma_px=1.6):
 # ==========================================================
 def illumination_field(xs, zs, Lx, zmin, zmax,
                        mode="point",
-                       light_x_frac=0.5,
-                       light_z_above_frac=1.2,
+                       light_source_x_frac=0.5,
+                       light_source_z_above_frac=1.2,
                        beam_sigma=0.18,
                        beam_depth_decay=1.5,
-                       eps=1e-6):
+                       eps=1e-6,
+                       light_x_frac=None,
+                       light_z_above_frac=None):
     """
     (1) Illumination:
       Build an illumination intensity field L(x,z) across the light-sheet plane.
@@ -275,9 +277,14 @@ def illumination_field(xs, zs, Lx, zmin, zmax,
     """
     X, Z = np.meshgrid(xs, zs)
 
+    if light_x_frac is not None:
+        light_source_x_frac = light_x_frac
+    if light_z_above_frac is not None:
+        light_source_z_above_frac = light_z_above_frac
+
     if mode == "point":
-        x0 = light_x_frac * Lx
-        z0 = zmax + light_z_above_frac * (zmax - zmin)
+        x0 = light_source_x_frac * Lx
+        z0 = zmax + light_source_z_above_frac * (zmax - zmin)
         d = np.sqrt((X - x0)**2 + (Z - z0)**2) + eps
         L_grid = 1.0 / (d**2 + eps)
 
@@ -288,7 +295,7 @@ def illumination_field(xs, zs, Lx, zmin, zmax,
         return L_grid.astype(np.float32), illum_at
 
     if mode == "gaussian_beam":
-        x0 = light_x_frac * Lx
+        x0 = light_source_x_frac * Lx
         depth = np.clip(zmax - Z, 0.0, None)  # depth from top
         L_grid = np.exp(-0.5 * ((X - x0) / beam_sigma)**2) * np.exp(-beam_depth_decay * depth)
 
@@ -313,7 +320,7 @@ def dye_emission(c, L_grid, dye_beta=8.0):
     return (dye_beta * c * L_grid).astype(np.float32)
 
 
-def beer_lambert_attenuation_path_integral(c, zs, dye_alpha=1.2):
+def beer_lambert_attenuation_path_integral(c, zs, dye_alpha=0.6):
     """
     (3) Attenuation (Beer–Lambert, path integral form):
       attenuation = exp(-alpha * ∫ c ds)
@@ -431,13 +438,15 @@ def init_state(
 
 
 def prepare_illumination(
-    xs, zs, Lx, zmin, zmax, illum_mode, light_x_frac, light_z_above_frac, beam_sigma, beam_depth_decay
+    xs, zs, Lx, zmin, zmax, illum_mode,
+    light_source_x_frac, light_source_z_above_frac,
+    beam_sigma, beam_depth_decay
 ):
     L_grid, illum_at = illumination_field(
         xs, zs, Lx, zmin, zmax,
         mode=illum_mode,
-        light_x_frac=light_x_frac,
-        light_z_above_frac=light_z_above_frac,
+        light_source_x_frac=light_source_x_frac,
+        light_source_z_above_frac=light_source_z_above_frac,
         beam_sigma=beam_sigma,
         beam_depth_decay=beam_depth_decay
     )
@@ -446,14 +455,20 @@ def prepare_illumination(
 
 
 def init_diagnostics():
-    return {"Imin": [], "Imax": [], "Imean": [], "vis_frac": []}
+    diag = {"I_min": [], "I_max": [], "I_mean": [], "visible_frac": []}
+    # Backward-compatible aliases for previous key names.
+    diag["Imin"] = diag["I_min"]
+    diag["Imax"] = diag["I_max"]
+    diag["Imean"] = diag["I_mean"]
+    diag["vis_frac"] = diag["visible_frac"]
+    return diag
 
 
-def step_flow_dynamics(state, xs, zs, t, dt, Lx, zmin, zmax, A, k, gamma, particle_noise, dye_kappa):
+def step_flow_dynamics(state, xs, zs, t, dt, Lx, zmin, zmax, A, k, gamma, particle_noise_sigma, dye_kappa):
     state["xp"], state["zp"] = advect_particles_rk2(
         state["xp"], state["zp"], t, dt, Lx, zmin, zmax,
         A=A, k=k, gamma=gamma,
-        noise_sigma=particle_noise
+        noise_sigma=particle_noise_sigma
     )
     state["c"] = advect_dye_semilag(
         state["c"], xs, zs, t, dt,
@@ -479,11 +494,11 @@ def step_out_of_plane_and_visibility(
 
 
 def compute_interaction_and_attenuation(
-    state, illum_at, L_grid, L_grid_max, particle_base_amp, particle_illum_power, dye_beta, zs, dye_alpha
+    state, illum_at, L_grid, L_grid_max, particle_amp, particle_illum_power, dye_beta, zs, dye_alpha
 ):
     Lp = illum_at(state["xp"], state["zp"])
     Lp_norm = (Lp / L_grid_max)
-    amps = (particle_base_amp * (Lp_norm ** particle_illum_power)).astype(np.float32)
+    amps = (particle_amp * (Lp_norm ** particle_illum_power)).astype(np.float32)
 
     E_dye = dye_emission(state["c"], L_grid, dye_beta=dye_beta)
     atten = beer_lambert_attenuation_path_integral(state["c"], zs, dye_alpha=dye_alpha)
@@ -501,22 +516,18 @@ def render_total_intensity(state, vis, amps, I_dye_pre, H, W, Lx, zmin, zmax, ps
     return (I_p + I_dye).astype(np.float32)
 
 
-def encode_frame(I, auto_exposure, exposure_percentile, use_camera_noise, bg, gain, read_sigma):
-    if auto_exposure:
-        frame_base = auto_exposure_to_uint8(I, p_high=exposure_percentile).astype(np.float32)
-    else:
-        frame_base = I
-
-    if use_camera_noise:
-        return camera_model(frame_base, bg=bg, gain=gain, read_sigma=read_sigma, clip_max=255)
-    return np.clip(frame_base, 0.0, 255.0).astype(np.uint8)
+def encode_frame(I, auto_exposure, exposure_percentile, use_camera_model, bg, gain, read_sigma):
+    # Keep camera/exposure behavior aligned with simulate_forward.py.
+    if use_camera_model and not auto_exposure:
+        return camera_model(I, bg=bg, gain=gain, read_sigma=read_sigma, clip_max=255)
+    return auto_exposure_to_uint8(I, p_high=exposure_percentile)
 
 
 def append_diagnostics(diag, I, vis):
-    diag["Imin"].append(float(I.min()))
-    diag["Imax"].append(float(I.max()))
-    diag["Imean"].append(float(I.mean()))
-    diag["vis_frac"].append(float(np.mean(vis)))
+    diag["I_min"].append(float(I.min()))
+    diag["I_max"].append(float(I.max()))
+    diag["I_mean"].append(float(I.mean()))
+    diag["visible_frac"].append(float(np.mean(vis)))
 
 
 # ==========================================================
@@ -529,18 +540,25 @@ def simulate_video_pipeline(
     # velocity field params (eqs 3,4)
     A=0.02, k=2*np.pi/1.0, gamma=0.0,
     # particle + dye dynamics
-    particle_noise=5e-4, dye_kappa=0.0,
+    particle_noise_sigma=5e-4, dye_kappa=0.0,
     # out-of-plane
     sheet_thickness=0.02, y_noise_sigma=0.005, y_kill=0.06, enable_out_of_plane=True,
     # pipeline params
-    illum_mode="point", light_x_frac=0.5, light_z_above_frac=1.2,
+    illum_mode="point",
+    light_source_x_frac=0.5, light_source_z_above_frac=1.2,
     beam_sigma=0.18, beam_depth_decay=1.5,
-    particle_base_amp=2.0, particle_illum_power=1.0, psf_sigma_px=1.6,
-    dye_beta=8.0, dye_alpha=1.2, dye_blur_sigma_px=0.7,
+    particle_amp=2.0, particle_illum_power=1.0, psf_sigma_px=1.6,
+    dye_beta=8.0, dye_alpha=0.6, dye_blur_sigma_px=0.7,
     # sensor / display
-    use_camera_noise=True, bg=10.0, gain=120.0, read_sigma=1.5,
+    use_camera_model=True, bg=10.0, gain=120.0, read_sigma=1.5,
     auto_exposure=True, exposure_percentile=99.7,
-    seed=1
+    seed=1,
+    # backward-compatible aliases (prefer canonical names above)
+    particle_noise=None,
+    light_x_frac=None,
+    light_z_above_frac=None,
+    use_camera_noise=None,
+    particle_base_amp=None
 ):
     """
     This is the forward operator A(x0,theta) -> b0:T, with an explicit Goal 2 pipeline.
@@ -550,9 +568,22 @@ def simulate_video_pipeline(
       final: dict holding final xp,zp,y,c
       diag: basic diagnostics
     """
+    if particle_noise is not None:
+        particle_noise_sigma = particle_noise
+    if light_x_frac is not None:
+        light_source_x_frac = light_x_frac
+    if light_z_above_frac is not None:
+        light_source_z_above_frac = light_z_above_frac
+    if use_camera_noise is not None:
+        use_camera_model = use_camera_noise
+    if particle_base_amp is not None:
+        particle_amp = particle_base_amp
+
     state, xs, zs = init_state(N, H, W, Lx, zmin, zmax, enable_out_of_plane, sheet_thickness, seed)
     L_grid, illum_at, L_grid_max = prepare_illumination(
-        xs, zs, Lx, zmin, zmax, illum_mode, light_x_frac, light_z_above_frac, beam_sigma, beam_depth_decay
+        xs, zs, Lx, zmin, zmax, illum_mode,
+        light_source_x_frac, light_source_z_above_frac,
+        beam_sigma, beam_depth_decay
     )
 
     video = np.zeros((T, H, W), dtype=np.uint8)
@@ -561,18 +592,18 @@ def simulate_video_pipeline(
     t = 0.0
     for n in range(T):
         state = step_flow_dynamics(
-            state, xs, zs, t, dt, Lx, zmin, zmax, A, k, gamma, particle_noise, dye_kappa
+            state, xs, zs, t, dt, Lx, zmin, zmax, A, k, gamma, particle_noise_sigma, dye_kappa
         )
         state, vis = step_out_of_plane_and_visibility(
             state, dt, enable_out_of_plane, y_noise_sigma, y_kill, sheet_thickness, N, Lx, zmin, zmax
         )
         amps, I_dye_pre = compute_interaction_and_attenuation(
-            state, illum_at, L_grid, L_grid_max, particle_base_amp, particle_illum_power, dye_beta, zs, dye_alpha
+            state, illum_at, L_grid, L_grid_max, particle_amp, particle_illum_power, dye_beta, zs, dye_alpha
         )
         I = render_total_intensity(
             state, vis, amps, I_dye_pre, H, W, Lx, zmin, zmax, psf_sigma_px, dye_blur_sigma_px
         )
-        frame = encode_frame(I, auto_exposure, exposure_percentile, use_camera_noise, bg, gain, read_sigma)
+        frame = encode_frame(I, auto_exposure, exposure_percentile, use_camera_model, bg, gain, read_sigma)
 
         video[n] = frame
         append_diagnostics(diag, I, vis)
@@ -591,19 +622,19 @@ if __name__ == "__main__":
         H=384, W=384,
         Lx=1.0, zmin=-0.5, zmax=0.5,
         A=0.02, k=2*np.pi/1.0, gamma=0.0,
-        particle_noise=5e-4, dye_kappa=0.0,
+        particle_noise_sigma=5e-4, dye_kappa=0.0,
         sheet_thickness=0.02, y_noise_sigma=0.005, y_kill=0.06, enable_out_of_plane=True,
         illum_mode="point",              # try also: "gaussian_beam"
-        particle_base_amp=2.0,
-        dye_beta=8.0, dye_alpha=1.2,
-        use_camera_noise=True,
+        particle_amp=2.0,
+        dye_beta=8.0, dye_alpha=0.6,
+        use_camera_model=True,
         auto_exposure=True,
         seed=1
     )
 
     print("video shape:", video.shape, "dtype:", video.dtype)
     print("I_total min/max/mean (over time):",
-          f"{min(diag['Imin']):.3g}/{max(diag['Imax']):.3g}/{np.mean(diag['Imean']):.3g}")
-    print("visible fraction (avg):", np.mean(diag["vis_frac"]))
+          f"{min(diag['I_min']):.3g}/{max(diag['I_max']):.3g}/{np.mean(diag['I_mean']):.3g}")
+    print("visible fraction (avg):", np.mean(diag["visible_frac"]))
 
     export_outputs(video, fps=20, base="sim_pipeline")
