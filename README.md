@@ -1,6 +1,7 @@
 # Mdm2_Group_10
 ---
-# 1. About `simulate_forward.py` — Forward Simulator ($A(x0, θ) → b0:T$) ($Hongze$ $Lin$)
+# 1. About `simulate_forward.py`
+## - Forward Simulator ($A(x0, θ) → b0:T$) ($Hongze$ $Lin$)
 
 This script implements a **forward simulator** for the project: given an initial latent state (particles + dye) and a set of parameters, it generates a **synthetic camera video** (a stack of grayscale frames).
 
@@ -131,7 +132,8 @@ Common exports:
 - key frames: `frame0.png`, `frame_mid.png`, `frame_last.png`
 ---
 
-# About `forward_pipeline.py` — Explicit Forward Imaging Pipeline $(A(x0, θ) → b0:T)$ ($Hongze$ $Lin$)
+# 2. About `forward_pipeline.py` 
+## — Explicit Forward Imaging Pipeline $(A(x0, θ) → b0:T)$ ($Hongze$ $Lin$)
 
 This script implements a **physically structured forward pipeline** for the modelling project.  
 Given an initial latent state (particles + dye) and model parameters, it generates a **synthetic camera video** (a stack of grayscale frames) by explicitly chaining:
@@ -150,8 +152,6 @@ $\[A(x_0,\theta)\ \mapsto\ b_{0:T}\]$
 > - avoid relying on PIV-style smoothing; instead build a forward model
 > - capture **location-dependent brightness** (beam profile, attenuation)
 > - provide a clean foundation for later optimisation/inference (e.g., Adam, HMC) via \(\min_x \|A(x)-b\|^2\)
-
----
 
 ## What the output GIF/video represents
 
