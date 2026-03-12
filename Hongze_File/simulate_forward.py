@@ -219,6 +219,9 @@ class SimConfig:
     # particle dynamics noise for x-z advection 
     particle_noise_sigma: float = 5e-4
     dye_kappa: float = 0.0
+    # concentration-field interface parameters (from SimpleModel_evolution_solver)
+    dye_interface_eps: float = 0.02
+    dye_interface_delta: float = 0.05
 
     # keep for backward compatibility; when False, y random walk/respawn is skipped
     enable_out_of_plane: bool = True
@@ -259,7 +262,7 @@ class State:
 
 
 # =========================================================
-# Evolution Model
+# Evolution Model (Quassi's model)
 # =========================================================
 
 '''
@@ -309,62 +312,59 @@ def advect_particles_rk2(x, z, t, dt, cfg):
     return x_new,z_new
 
 
-def bilinear_sample(field, xq, zq, xs, zs, periodic_x=True):
-
-    Nz, Nx = field.shape
-    dx = xs[1] - xs[0]
-    dz = zs[1] - zs[0]
-
-    if periodic_x:
-        xq = wrap_x_centered(xq, xs[-1] - xs[0] + dx)
-
-    ix = (xq - xs[0]) / dx
-    iz = (zq - zs[0]) / dz
-
-    if periodic_x:
-        ix = np.mod(ix, Nx)
-    else:
-        ix = np.clip(ix, 0, Nx - 1 - 1e-6)
-    iz = np.clip(iz, 0, Nz - 1 - 1e-6)
-
-    i0 = np.floor(ix).astype(int)
-    j0 = np.floor(iz).astype(int)
-    i1 = (i0 + 1) % Nx if periodic_x else np.minimum(i0 + 1, Nx - 1)
-    j1 = np.minimum(j0 + 1, Nz - 1)
-
-    tx = ix - i0
-    tz = iz - j0
-
-    f00 = field[j0, i0]
-    f10 = field[j0, i1]
-    f01 = field[j1, i0]
-    f11 = field[j1, i1]
-
-    return (1 - tx) * (1 - tz) * f00 + tx * (1 - tz) * f10 + (1 - tx) * tz * f01 + tx * tz * f11
-
-
-def advect_dye_semilag(c, xs, zs, t, dt, cfg):
-
+def _concentration_rhs_upwind(c, xs, zs, t, cfg):
+    """
+    Upwind spatial discretisation of concentration transport:
+        dC/dt = -u dC/dx - w dC/dz [+ kappa * Lap(C)]
+    This follows the concentration-field treatment in
+    SimpleModel_evolution_solver.ipynb.
+    """
     X, Z = np.meshgrid(xs, zs)
     u, w = vel_u_w(X, Z, t, cfg.A, cfg.k, cfg.gamma)
 
-    Xb = X - u * dt
-    Zb = Z - w * dt
+    dx = xs[1] - xs[0]
+    dz = zs[1] - zs[0]
 
-    c_new = bilinear_sample(c, Xb, Zb, xs, zs, periodic_x=True)
+    # Upwind in x (axis=1, centered x-grid).
+    dcdx_b = np.zeros_like(c)
+    dcdx_f = np.zeros_like(c)
+    dcdx_b[:, 1:] = (c[:, 1:] - c[:, :-1]) / dx
+    dcdx_f[:, :-1] = (c[:, 1:] - c[:, :-1]) / dx
+    dcdx = np.where(u >= 0, dcdx_b, dcdx_f)
+
+    # Upwind in z (axis=0).
+    dcdz_b = np.zeros_like(c)
+    dcdz_f = np.zeros_like(c)
+    dcdz_b[1:, :] = (c[1:, :] - c[:-1, :]) / dz
+    dcdz_f[:-1, :] = (c[1:, :] - c[:-1, :]) / dz
+    dcdz = np.where(w >= 0, dcdz_b, dcdz_f)
+
+    dcdt = -u * dcdx - w * dcdz
 
     if cfg.dye_kappa > 0:
-        c_pad = np.pad(c_new, ((1, 1), (0, 0)), mode="edge")
+        c_pad = np.pad(c, ((1, 1), (0, 0)), mode="edge")
         c_up = c_pad[0:-2, :]
         c_dn = c_pad[2:, :]
-        c_lt = np.roll(c_new, 1, axis=1)
-        c_rt = np.roll(c_new, -1, axis=1)
-        dx = xs[1] - xs[0]
-        dz = zs[1] - zs[0]
-        lap = (c_lt - 2 * c_new + c_rt) / dx**2 + (c_up - 2 * c_new + c_dn) / dz**2
-        c_new = np.clip(c_new + dt * cfg.dye_kappa * lap, 0.0, None)
+        c_lt = np.roll(c, 1, axis=1)
+        c_rt = np.roll(c, -1, axis=1)
+        lap = (c_lt - 2 * c + c_rt) / dx**2 + (c_up - 2 * c + c_dn) / dz**2
+        dcdt = dcdt + cfg.dye_kappa * lap
 
-    return c_new
+    return dcdt
+
+
+def advect_dye_semilag(c, xs, zs, t, dt, cfg):
+    """
+    One-step RK4 update for concentration field using upwind RHS.
+    Function name is kept for backward compatibility.
+    """
+    k1 = _concentration_rhs_upwind(c, xs, zs, t, cfg)
+    k2 = _concentration_rhs_upwind(c + 0.5 * dt * k1, xs, zs, t + 0.5 * dt, cfg)
+    k3 = _concentration_rhs_upwind(c + 0.5 * dt * k2, xs, zs, t + 0.5 * dt, cfg)
+    k4 = _concentration_rhs_upwind(c + dt * k3, xs, zs, t + dt, cfg)
+
+    c_new = c + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+    return np.clip(c_new, 0.0, 1.0).astype(np.float32)
 
 
 def update_y_depth(y,dt,cfg):
@@ -553,7 +553,9 @@ def init_state(cfg):
 
     X,Z = np.meshgrid(xs,zs)
 
-    c = np.exp(-(X**2+(Z-0.15)**2)/0.02)
+    eta = cfg.dye_interface_eps * np.cos(cfg.k * X)
+    c = 0.5 * (1.0 + np.tanh((Z - eta) / cfg.dye_interface_delta))
+    c = c.astype(np.float32)
 
     return State(xp,zp,y,c),xs,zs
 
