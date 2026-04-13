@@ -54,7 +54,7 @@ from hmc_density_inference_v2 import (
     GRID_N, DT, SIGMA_OBS, SIGMA_DYN, SIGMA_RHO,
     x_vals, z_vals, XX, ZZ,
     make_prior_density, make_true_initial_density, forward_trajectory, optical_model,
-    Potential, Integrator, Metropolis, HMCSampler, GEOM,
+    Potential, Integrator, Metropolis, HMCSampler, GEOM, generate_synthetic_sequence,
 )
 
 torch.manual_seed(99)
@@ -73,16 +73,16 @@ print(f"Test image min: {test_image.min():.6f}")
 # SETTINGS — adjust to match your main run
 # =============================================================================
 
-N_FRAMES   = 2       # matches your main run (3 frames total)
-N_SAMPLES  = 300
-N_WARMUP   = 150     # enough warmup for tanh initialisation
-MIN_STEP   = 0.001
-MAX_STEP   = 0.003
+N_FRAMES   = 4       # matches your main run (3 frames total)
+N_SAMPLES  = 100
+N_WARMUP   = 30    # enough warmup for tanh initialisation
+MIN_STEP   = 0.002
+MAX_STEP   = 0.007
 MIN_TRAJ   = 10
 MAX_TRAJ   = 20
 
 
-OUTDIR = 'outputs'
+OUTDIR = 'WB_files/outputs'
 
 
 # =============================================================================
@@ -815,7 +815,123 @@ def plot_rhat(results1: dict, results2: dict):
     print(f'  R-hat summary: mean={mean_rhat:.4f}  max={max_rhat:.4f}  '
           f'{100*frac_ok:.1f}% < 1.1')
 
+def plot_density_evolution(results: dict,
+                           rho_true_sequence: list[torch.Tensor]):
+    """
+    Plot 5: Density field evolution from HMC inference.
 
+    Row 1: True density at each frame
+    Row 2: MAP estimate at each frame
+    Row 3: Change in MAP density between consecutive frames
+           with quiver arrows showing the direction of density change
+    """
+    T_plus_1 = results['rho_mean'].shape[0]
+    rho_mean = results['rho_mean']   # (T+1, N, N) — already computed
+
+    from hmc_density_inference_v2 import TANK_WIDTH, TANK_HEIGHT
+    extent = [-TANK_WIDTH/2, TANK_WIDTH/2, -TANK_HEIGHT/2, TANK_HEIGHT/2]
+
+    x_phys = np.linspace(-TANK_WIDTH/2,  TANK_WIDTH/2,  GRID_N)
+    z_phys = np.linspace(-TANK_HEIGHT/2, TANK_HEIGHT/2, GRID_N)
+
+    fig, axes = plt.subplots(3, T_plus_1, figsize=(4.5 * T_plus_1, 11))
+    if T_plus_1 == 1:
+        axes = axes[:, np.newaxis]
+
+    fig.suptitle('Plot 5: Inferred Density Field Evolution\n'
+                 'Row 3: Δrho with arrows showing direction of density change',
+                 fontsize=12, fontweight='bold')
+
+    # Shared colour scale for Δrho rows
+    all_diffs = [abs((rho_mean[t] - rho_mean[t-1]).numpy()).max()
+                 for t in range(1, T_plus_1)]
+    vmax_diff = max(max(all_diffs) if all_diffs else 0.01, 0.01)
+
+    for t in range(T_plus_1):
+        arr_true = rho_true_sequence[t].numpy()
+        arr_map  = rho_mean[t].numpy()
+
+        # ── Row 1: True density ───────────────────────────────────────────
+        im1 = axes[0, t].imshow(arr_true.T, origin='lower', cmap='viridis',
+                                 aspect='auto', extent=extent, vmin=0, vmax=1)
+        axes[0, t].set_title(f'True rho  t={t}', fontsize=9, fontweight='bold')
+        axes[0, t].set_xlabel('x (m)', fontsize=7)
+        axes[0, t].set_ylabel('z (m)', fontsize=7)
+        axes[0, t].axhline(0, color='white', lw=0.8, ls='--', alpha=0.5)
+        if t == 0:
+            axes[0, t].set_ylabel('True rho', fontsize=9)
+        if t == T_plus_1 - 1:
+            plt.colorbar(im1, ax=axes[0, t], fraction=0.046)
+
+        # ── Row 2: MAP density ────────────────────────────────────────────
+        im2 = axes[1, t].imshow(arr_map.T, origin='lower', cmap='viridis',
+                                 aspect='auto', extent=extent, vmin=0, vmax=1)
+        axes[1, t].set_title(f'Post. Mean  t={t}', fontsize=9, fontweight='bold')
+        axes[1, t].set_xlabel('x (m)', fontsize=7)
+        axes[1, t].axhline(0, color='white', lw=0.8, ls='--', alpha=0.5)
+        if t == 0:
+            axes[1, t].set_ylabel('Post. Mean', fontsize=9)
+        if t == T_plus_1 - 1:
+            plt.colorbar(im2, ax=axes[1, t], fraction=0.046)
+
+        # ── Row 3: Δrho with quiver ───────────────────────────────────────
+        if t == 0:
+            diff = np.zeros((GRID_N, GRID_N))
+            axes[2, t].set_title('Δrho  t=0\n(reference)', fontsize=9,
+                                  fontweight='bold')
+        else:
+            diff = arr_map - rho_mean[t-1].numpy()
+            mean_abs = float(np.abs(diff).mean())
+            axes[2, t].set_title(f'Δrho  t={t-1}→{t}\n'
+                                  f'mean|Δ|={mean_abs:.4f}',
+                                  fontsize=9, fontweight='bold')
+
+        im3 = axes[2, t].imshow(diff.T, origin='lower', cmap='RdBu_r',
+                                  aspect='auto', extent=extent,
+                                  vmin=-vmax_diff, vmax=vmax_diff)
+        axes[2, t].axhline(0, color='black', lw=0.8, ls='--', alpha=0.5)
+        axes[2, t].set_xlabel('x (m)', fontsize=7)
+        if t == 0:
+            axes[2, t].set_ylabel('Δrho  Blue=decrease\nRed=increase',
+                                   fontsize=8)
+        if t == T_plus_1 - 1:
+            plt.colorbar(im3, ax=axes[2, t], fraction=0.046)
+
+        # Quiver: spatial gradient of Δrho shows direction density is shifting
+        if t > 0:
+            stride = max(1, GRID_N // 8)
+            # np.gradient returns [d/drow, d/dcol] = [d/dz, d/dx] for arr.T
+            # We want gradients in physical (x,z) space
+            grad_x, grad_z = np.gradient(diff, axis=0), np.gradient(diff, axis=1)
+
+            xi = x_phys[::stride]
+            zi = z_phys[::stride]
+            X_q, Z_q = np.meshgrid(xi, zi, indexing='ij')
+            gx = grad_x[::stride, ::stride]
+            gz = grad_z[::stride, ::stride]
+
+            mag = np.sqrt(gx**2 + gz**2)
+            max_mag = max(float(mag.max()), 1e-12)
+
+            axes[2, t].quiver(
+                X_q, Z_q,
+                gx / max_mag,   # normalised direction
+                gz / max_mag,
+                color='black',
+                alpha=0.6,
+                scale=15,
+                width=0.004,
+                pivot='mid'
+            )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    path = f'{OUTDIR}/diag_05_density_evolution.png'
+    fig.savefig(path, dpi=140, bbox_inches='tight')
+    print(f'  Saved: {path}')
+    print('  Density change summary (Posterior Mean):')
+    for t in range(1, T_plus_1):
+        d = (rho_mean[t] - rho_mean[t-1]).abs().mean().item()
+        print(f'    t={t-1}→{t}: mean|Δrho| = {d:.4f}')
 # =============================================================================
 # SECTION 9 — MAIN
 # =============================================================================
@@ -829,9 +945,9 @@ if __name__ == '__main__':
 
     # ── Step 1: Generate perturbed synthetic data ─────────────────────────
     print('\n[1] Generating perturbed synthetic data...')
-    b_obs_seq, rho_true_seq, rho_true_0 = generate_perturbed_sequence(
-        n_frames=N_FRAMES, noise_std=SIGMA_OBS, perturbation_amp=0.15
-    )
+    b_obs_seq, rho_true_seq = generate_synthetic_sequence(
+        n_frames=N_FRAMES)
+    rho_true_0 = rho_true_seq[0]
     print(f'    {len(b_obs_seq)} frames generated')
     print(f'    True rho_0 range: [{rho_true_0.min():.3f}, {rho_true_0.max():.3f}]')
     print(f'    Prior  rho_0 range: [{make_prior_density().min():.3f}, '
@@ -864,8 +980,9 @@ if __name__ == '__main__':
     plot_accuracy(accuracy, results1, rho_true_seq)
     plot_posterior_predictive(results1, b_obs_seq)
     plot_multimodality(results1, results2)
+    plot_density_evolution(results1, rho_true_seq)
     plot_rhat(results1, results2)
-
+    
     # ── Step 6: Final summary ─────────────────────────────────────────────
     print('\n' + '=' * 60)
     print('DIAGNOSTIC SUMMARY')
@@ -878,6 +995,6 @@ if __name__ == '__main__':
     print()
     print('  Output files:')
     for i, name in enumerate(['accuracy', 'posterior_predictive',
-                               'multimodality', 'rhat'], 1):
+                           'multimodality', 'rhat', 'density_evolution'], 1):
         print(f'    diag_0{i}_{name}.png')
     print('=' * 60)

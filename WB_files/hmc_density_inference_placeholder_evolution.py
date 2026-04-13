@@ -81,7 +81,6 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from Optical_Model import geometry, A_image_torch
 import time
-from Evolution_Model import DifferentiableRTAdvector, DyeConfig
 
 # ── Reproducibility ───────────────────────────────────────────────────────────
 torch.manual_seed(42)
@@ -92,22 +91,18 @@ np.random.seed(42)
 # SECTION 1 — GRID AND PHYSICAL CONSTANTS
 # =============================================================================
 
-
 GRID_N = 32       # spatial grid is GRID_N x GRID_N - cells per dimension (match optical model)
 
 # Physical domain
 # x ∈ [-π, π]  (horizontal)
 # z ∈ [-1,  1] (vertical, z=0 is the interface)
-# x_vals = torch.linspace(-np.pi, np.pi, GRID_N)
-# z_vals = torch.linspace(-1.0,   1.0,  GRID_N)
+x_vals = torch.linspace(-np.pi, np.pi, GRID_N)
+z_vals = torch.linspace(-1.0,   1.0,  GRID_N)
 # x_vals = torch.linspace(0, 0.2, GRID_N)
 # z_vals = torch.linspace(0,   0.4,  GRID_N)
 # Physical domain — must match the optical model
 TANK_WIDTH  = 0.2   # metres
 TANK_HEIGHT = 0.4   # metres
-x_vals = torch.linspace(-TANK_WIDTH/2,  TANK_WIDTH/2,  GRID_N)  # [-0.1, 0.1]
-z_vals = torch.linspace(-TANK_HEIGHT/2, TANK_HEIGHT/2, GRID_N)  # [-0.2, 0.2]
-XX, ZZ = torch.meshgrid(x_vals, z_vals, indexing='ij')
 
 delta_x = TANK_WIDTH / GRID_N # individual cell width
 delta_z = TANK_HEIGHT / GRID_N   # individual cell height
@@ -126,7 +121,7 @@ GEOM = geometry(grid, TANK_WIDTH, TANK_HEIGHT)
 #   XX[i, j] = x_vals[i]  (varies along first axis)
 #   ZZ[i, j] = z_vals[j]  (varies along second axis)
 # So XX and ZZ have shape (N_x, N_z) = (50, 50).
-
+XX, ZZ = torch.meshgrid(x_vals, z_vals, indexing='ij')
 
 DT = 0.05   # timestep Δt between frames
 
@@ -134,42 +129,16 @@ DT = 0.05   # timestep Δt between frames
 # These are NOT unknowns. They define the designed forward model.
 # In a real deployment these would be determined from physical knowledge
 # of the experiment (e.g. from separate calibration measurements).
-# A_FIXED     = 1.0
-# K_FIXED     = 1.0
-# GAMMA_FIXED = 0.5
+A_FIXED     = 1.0
+K_FIXED     = 1.0
+GAMMA_FIXED = 0.5
 
 # ── Noise hyperparameters ─────────────────────────────────────────────────────
-SIGMA_OBS = 0.000156 # 0.05   # observation noise std (camera noise)
-SIGMA_DYN = 0.05    # dynamical consistency std (how strictly physics is enforced)
-SIGMA_RHO = 0.15   # initial condition prior std (how close rho_0 must be to prior)
+SIGMA_OBS = 0.0003 # 0.05   # observation noise std (camera noise)
+SIGMA_DYN = 0.008   # dynamical consistency std (how strictly physics is enforced)
+SIGMA_RHO = 0.10   # initial condition prior std (how close rho_0 must be to prior)
 
-_dye_cfg = DyeConfig()
 
-ADVECTOR = DifferentiableRTAdvector(
-    nx                          = GRID_N,
-    nz                          = GRID_N,
-    lx                          = TANK_WIDTH,         # 0.2
-    lz                          = TANK_HEIGHT,        # 0.4
-    dt_img                      = _dye_cfg.dt,        # 0.01s native timestep
-    accel_value                 = _dye_cfg.unstable_accel,
-    accel_scale                 = max(abs(_dye_cfg.unstable_accel),
-                                      abs(_dye_cfg.stable_accel)),
-    pressure_iterations         = _dye_cfg.pressure_iterations,
-    max_flow_strength           = _dye_cfg.max_flow_strength,
-    initial_flow_strength       = _dye_cfg.initial_flow_strength,
-    initial_buoyancy_coupling   = _dye_cfg.buoyancy_coupling,
-    initial_rise_velocity_scale = _dye_cfg.rise_velocity_scale,
-    initial_sorting_velocity_scale = _dye_cfg.sorting_velocity_scale,
-    initial_molecular_diffusivity  = _dye_cfg.molecular_diffusivity,
-    initial_shear_diffusivity      = _dye_cfg.shear_diffusivity,
-    initial_buoyancy_diffusivity   = _dye_cfg.buoyancy_diffusivity,
-    initial_vertical_decay_length  = _dye_cfg.vertical_decay_length,
-)
-
-for param in ADVECTOR.parameters():
-    param.requires_grad_(False)
-ADVECTOR.eval()   # disable parameter gradients — we only want density gradients
-N_SUBSTEPS = 50 #max(1, round(DT / _dye_cfg.dt)) # = 5
 # =============================================================================
 # SECTION 2 — FORWARD MODEL COMPONENTS
 # =============================================================================
@@ -180,124 +149,134 @@ def make_prior_density() -> torch.Tensor:
     The PRIOR MEAN used by the inference engine.
     Represent what you belive rho_0 looks like before seeing any images. Should be 
     uninformative - the images should do the work of recovering the true structure
-    ZZ is now in physical metres, so we scale the tanh sharpness accordingly.
-    A coefficient of 50 gives a ~4mm transition width, physically realistic.
     """
     #return torch.ones(GRID_N, GRID_N) * 0.5
-    return 0.5 * (1.0 + torch.tanh(50.0 * ZZ))
-# def make_true_initial_density() -> torch.Tensor:
-#     """
-#     Returns the prior mean for the initial density field rho_0.
-
-#     Physics: dense fluid (rho ~ 1) sits above the interface z=0,
-#     light fluid (rho ~ 0) below.  A smooth tanh profile encodes this.
-#     A small sinusoidal perturbation seeds the Rayleigh-Taylor instability.
-
-#     Shape: (GRID_N, GRID_N) = (N_x, N_z)
-#     True initial condition with sinusoidal perturbation seeding RT instability.
-#     Wavenumber matches the advector's mode_number=6 over width Lx=0.2m:
-#         k = 6π / 0.2 = 94.25 rad/m
-#     """
-#     k_phys = _dye_cfg.k   # 6π/0.2 ≈ 94.25 rad/m
-#     rho = 0.5 * (1.0 + torch.tanh(50.0 * ZZ))
-#     rho = rho + 0.015 * torch.exp(-200.0 * ZZ**2) * torch.cos(k_phys * XX)
-#     return rho.clamp(0.0, 1.0)
+    return 0.5 * (1.0 + torch.tanh(10.0 * ZZ))
 def make_true_initial_density() -> torch.Tensor:
     """
-    Replicates partner's initial_low_density_fraction in our convention.
-    Interface is displaced sinusoidally by initial_wave_amplitude=0.008m.
-    rho_norm = 1 - phi, so where phi=1 (dyed, below), rho=0,
-    and where phi=0 (undyed, above), rho=1.
-    """
-    k_phys   = _dye_cfg.k                      # 6π/0.2 ≈ 94.25 rad/m
-    amp      = _dye_cfg.initial_wave_amplitude #* 5 # 0.008 m
-    #amp = 0.05
-    # Interface height varies sinusoidally with x
-    # Partner uses phase = k*(x + 0.5*Lx) to shift the cosine
-    phase    = k_phys * (XX + 0.5 * TANK_WIDTH)
-    eta      = amp * torch.cos(phase)           # shape (N_x, N_z)
+    Returns the prior mean for the initial density field rho_0.
 
-    # Smooth step: rho=1 above interface, rho=0 below
-    # Use tanh to approximate the sharp cell-boundary fill calculation
-    # Width parameter 1/0.004 gives ~4mm transition, matching dx=dz=8mm
-    rho = 0.5 * (1.0 + torch.tanh((ZZ - eta) / (0.5 * TANK_HEIGHT / GRID_N)))
-    return rho.clamp(0.0, 1.0)
+    Physics: dense fluid (rho ~ 1) sits above the interface z=0,
+    light fluid (rho ~ 0) below.  A smooth tanh profile encodes this.
+    A small sinusoidal perturbation seeds the Rayleigh-Taylor instability.
+
+    Shape: (GRID_N, GRID_N) = (N_x, N_z)
+    """
+    rho_prior = 0.5 * (1.0 + torch.tanh(10.0 * ZZ))
+    rho_prior = rho_prior + 0.15 * torch.exp(-5.0 * ZZ**2) * torch.cos(K_FIXED * XX)
+    return rho_prior
+
 
 # ── 2b. Placeholder velocity field  (equations 3-4 from brief) ───────────────
 
-# def velocity_field(t: float = 0.0) -> tuple[torch.Tensor, torch.Tensor]:
-#     """
-#     Returns the Rayleigh-Taylor placeholder velocity field at time t.
+def velocity_field(t: float = 0.0) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Returns the Rayleigh-Taylor placeholder velocity field at time t.
 
-#     This is the FIXED designed forward model — A_FIXED, K_FIXED, GAMMA_FIXED
-#     are constants, not unknowns.
+    This is the FIXED designed forward model — A_FIXED, K_FIXED, GAMMA_FIXED
+    are constants, not unknowns.
 
-#     Equations (3)-(4) from the brief:
-#         u(x,z,t) = Re( i·k·A · e^{±kz} · e^{ikx} · e^{γt} )
-#         w(x,z,t) = Re( ∓k·A · e^{±kz} · e^{ikx} · e^{γt} )
-#     upper sign for z > 0, lower for z < 0.
+    Equations (3)-(4) from the brief:
+        u(x,z,t) = Re( i·k·A · e^{±kz} · e^{ikx} · e^{γt} )
+        w(x,z,t) = Re( ∓k·A · e^{±kz} · e^{ikx} · e^{γt} )
+    upper sign for z > 0, lower for z < 0.
 
-#     Parameters
-#     ----------
-#     t : physical time at which to evaluate the velocity field
+    Parameters
+    ----------
+    t : physical time at which to evaluate the velocity field
 
-#     Returns
-#     -------
-#     u : (GRID_N, GRID_N) horizontal velocity
-#     w : (GRID_N, GRID_N) vertical velocity
-#     """
-#     A     = torch.tensor(A_FIXED,     dtype=torch.float32)
-#     k     = torch.tensor(K_FIXED,     dtype=torch.float32)
-#     gamma = torch.tensor(GAMMA_FIXED, dtype=torch.float32)
+    Returns
+    -------
+    u : (GRID_N, GRID_N) horizontal velocity
+    w : (GRID_N, GRID_N) vertical velocity
+    """
+    A     = torch.tensor(A_FIXED,     dtype=torch.float32)
+    k     = torch.tensor(K_FIXED,     dtype=torch.float32)
+    gamma = torch.tensor(GAMMA_FIXED, dtype=torch.float32)
 
-#     growth  = torch.exp(gamma * t)
-#     cos_kx  = torch.cos(k * XX)
-#     sin_kx  = torch.sin(k * XX)
+    growth  = torch.exp(gamma * t)
+    cos_kx  = torch.cos(k * XX)
+    sin_kx  = torch.sin(k * XX)
 
-#     # Vertical structure: exponential decay away from interface
-#     mask_above = (ZZ >= 0).float()
-#     mask_below = 1.0 - mask_above
-#     e_kz = mask_above * torch.exp(-k * ZZ) + mask_below * torch.exp(k * ZZ)
+    # Vertical structure: exponential decay away from interface
+    mask_above = (ZZ >= 0).float()
+    mask_below = 1.0 - mask_above
+    e_kz = mask_above * torch.exp(-k * ZZ) + mask_below * torch.exp(k * ZZ)
 
-#     # u = Re(ik·A·e^{±kz}·e^{ikx}·e^{γt}) = -A·sin(kx)·e^{±kz}·e^{γt}
-#     u = -A * sin_kx * e_kz * growth
+    # u = Re(ik·A·e^{±kz}·e^{ikx}·e^{γt}) = -A·sin(kx)·e^{±kz}·e^{γt}
+    u = -A * sin_kx * e_kz * growth
 
-#     # w = Re(∓k·A·e^{±kz}·e^{ikx}·e^{γt}) = ∓k·A·cos(kx)·e^{±kz}·e^{γt}
-#     w_above = -k * A * cos_kx * torch.exp(-k * ZZ) * growth * mask_above
-#     w_below =  k * A * cos_kx * torch.exp( k * ZZ) * growth * mask_below
-#     w = w_above + w_below
+    # w = Re(∓k·A·e^{±kz}·e^{ikx}·e^{γt}) = ∓k·A·cos(kx)·e^{±kz}·e^{γt}
+    w_above = -k * A * cos_kx * torch.exp(-k * ZZ) * growth * mask_above
+    w_below =  k * A * cos_kx * torch.exp( k * ZZ) * growth * mask_below
+    w = w_above + w_below
 
-#     return u, w
+    return u, w
 
 
 # ── 2c. Evolution model  ← TEAM SLOT ─────────────────────────────────────────
 
 def evolve_density(rho: torch.Tensor, t: float = 0.0) -> torch.Tensor:
     """
-    Evolves the density field rho by one timestep using the partner's
-    DifferentiableRTAdvector. Gradients flow through this function
-    with respect to rho, which is required for HMC.
+    Advects the density field forward by one timestep DT using the fixed
+    velocity field evaluated at time t.
+
+    Method: semi-Lagrangian back-tracing.
+    At each grid cell (x_i, z_j), find the source position by tracing
+    back along the velocity field, then interpolate rho there:
+
+        x_src = x_i - u(x_i, z_j, t) · DT
+        z_src = z_j - w(x_i, z_j, t) · DT
+        rho_new(x_i, z_j) = interpolate(rho, x_src, z_src)
+
+    This is mass-conservative to first order.
+
+    TEAM SLOT: Replace the body of this function with your preferred
+    advection scheme (e.g. RK4 back-tracing, mass-conserving remapping).
+    Keep the signature:  rho (N_x, N_z) -> rho_new (N_x, N_z).
 
     Parameters
     ----------
-    rho : tensor (N_x, N_z)  — your internal convention, values in [0, 1]
-    t   : float, current physical time (currently unused by advector
-          since accel_value is fixed at construction)
+    rho : torch.Tensor, shape (N_x, N_z)
+        Density field at current time.
+    t   : float
+        Current physical time (used to evaluate the velocity field).
 
     Returns
     -------
-    rho_next : tensor (N_x, N_z)
+    rho_new : torch.Tensor, shape (N_x, N_z)
+        Advected density field at time t + DT.
     """
-    # Partner's model expects (Nz, Nx) — transpose from your (Nx, Nz)
+    u, w = velocity_field(t=t)
 
-    rho_nz_nx = rho.T                          # (N_x, N_z) → (N_z, N_x) to match advector convention
-    # Forward pass — gradients flow through this
-    for _ in range(N_SUBSTEPS):
-        rho_nz_nx = ADVECTOR(rho_nz_nx)      
+    # Back-trace source positions
+    x_src = XX - u * DT     # where did the parcel at (x_i, z_j) come from?
+    z_src = ZZ - w * DT
 
-    # Transpose back to your (N_x, N_z) convention
+    # Normalise to [-1, 1] for torch grid_sample
+    x_norm = (x_src / np.pi).clamp(-1.0, 1.0)
+    z_norm = (z_src / 1.0 ).clamp(-1.0, 1.0)
 
-    return rho_nz_nx.T                    # back to (N_x, N_z)
+    # ── grid_sample axis convention ───────────────────────────────────────
+    # grid_sample treats its input as (batch, channel, HEIGHT, WIDTH),
+    # i.e. dim -2 = z-axis (rows), dim -1 = x-axis (columns).
+    # Our rho is stored as (N_x, N_z), so we MUST transpose before passing
+    # it in, and transpose the result back.
+    # The grid argument has shape (1, N_z, N_x, 2) where the last dim is
+    # [x_coord, z_coord] in grid_sample's convention (x first, despite
+    # the spatial layout being (H=z, W=x)).
+    # ─────────────────────────────────────────────────────────────────────
+    rho_input = rho.T.unsqueeze(0).unsqueeze(0)          # (1, 1, N_z, N_x)
+    grid      = torch.stack([x_norm.T, z_norm.T], dim=-1).unsqueeze(0)  # (1, N_z, N_x, 2)
+
+    rho_new_zx = F.grid_sample(
+        rho_input, grid,
+        mode='bilinear',
+        padding_mode='border',
+        align_corners=True
+    ).squeeze(0).squeeze(0)                              # (N_z, N_x)
+
+    return rho_new_zx.T                                  # (N_x, N_z)
 
 
 # ── 2d. Optical model  ← TEAM SLOT ───────────────────────────────────────────
@@ -337,8 +316,7 @@ def optical_model(rho: torch.Tensor) -> torch.Tensor:
     image : torch.Tensor, shape (N_x, N_z)
     """
     # Their model expects (nz, nx) — transpose from your (nx, nz)
-    dye_concentration = rho
-    state_nz_nx = dye_concentration.T    # shape (N_z, N_x) = (nz, nx)
+    state_nz_nx = rho.T    # shape (N_z, N_x) = (nz, nx)
 
     # Run their differentiable forward model
     image_nz_nx = A_image_torch(state_nz_nx, GEOM)   # shape (nz, nx)
@@ -1193,7 +1171,7 @@ def plot_results(results:           dict,
     def _show(ax, data, title, cmap='viridis', vmin=None, vmax=None):
         arr = data.numpy() if isinstance(data, torch.Tensor) else data
         im = ax.imshow(arr.T, origin='lower', cmap=cmap, aspect='auto',
-                       extent=[-TANK_WIDTH/2, TANK_WIDTH/2, -TANK_HEIGHT/2, TANK_HEIGHT/2],
+                       extent=[-np.pi, np.pi, -1, 1],
                        vmin=vmin, vmax=vmax)
         ax.set_title(title, fontsize=9)
         ax.set_xlabel('x', fontsize=8)
@@ -1280,149 +1258,17 @@ def test_optical_model():
     plt.title('Check 2: optical model output\n'
             'Expect: bright top (high dye), dark bottom, shadowing from absorption')
     plt.xlabel('x'); plt.ylabel('z')
-    plt.savefig('WB_files/outputs/optical_model_check.png', dpi=120, bbox_inches='tight')
+    plt.savefig('optical_model_check.png', dpi=120, bbox_inches='tight')
     print("Check 2 DONE — saved optical_model_check.png")
-def test_evolution_model():
-    with torch.no_grad():
-        rho_test  = make_true_initial_density()
-        rho_step1 = evolve_density(rho_test, t=0.0)
-        rho_step2 = evolve_density(rho_step1, t=DT)
-        rho_step3 = evolve_density(rho_step2, t=2*DT)
-
-        for i, (a, b) in enumerate([(rho_test, rho_step1),
-                                    (rho_step1, rho_step2),
-                                    (rho_step2, rho_step3)]):
-            diff = (b - a).abs().mean()
-            print(f"Step {i}→{i+1}: mean change = {diff:.6f}")
-
-        print(f"\nrho ranges:")
-        for i, r in enumerate([rho_test, rho_step1, rho_step2, rho_step3]):
-            print(f"  t={i}: [{r.min():.4f}, {r.max():.4f}]  mean={r.mean():.4f}")
-    rho_test = make_true_initial_density().requires_grad_(True)
-    rho_next = evolve_density(rho_test)
-    rho_next.sum().backward()
-    print(f"Gradient norm: {rho_test.grad.norm():.4f}")
-
-    b_obs_seq, rho_true_seq = generate_synthetic_sequence(n_frames=2)
-    pot = Potential(b_obs_seq, make_prior_density())
-    log_joint, q, grad, _ = pot.generate()
-    print(f"Log-posterior at init: {log_joint:.1f}")
-    print(f"Grad norm at init:     {grad.norm():.4f}")
-    print(f"Any NaN in grad:       {torch.isnan(grad).any()}")
-
-    # Break down the individual terms
-    rho_seq = q.reshape(3, GRID_N, GRID_N)
-    rho_0 = rho_seq[0]
-    rho_1 = rho_seq[1]
-    rho_2 = rho_seq[2]
-
-    # Likelihood term at t=0
-    b_pred_0 = optical_model(rho_0)
-    ll_0 = -0.5 / SIGMA_OBS**2 * ((b_obs_seq[0] - b_pred_0)**2).sum()
-    print(f"\nLikelihood t=0:        {ll_0:.1f}")
-
-    # Dynamical prior term
-    rho_1_pred = evolve_density(rho_0.detach(), t=0.0)
-    dyn_0 = -0.5 / SIGMA_DYN**2 * ((rho_1 - rho_1_pred)**2).sum()
-    print(f"Dynamical prior t=0→1: {dyn_0:.1f}")
-
-    # Initial condition prior
-    rho_prior = make_prior_density()
-    ic_prior = -0.5 / SIGMA_RHO**2 * ((rho_0 - rho_prior)**2).sum()
-    print(f"IC prior:              {ic_prior:.1f}")
 # =============================================================================
 # SECTION 10 — MAIN
 # =============================================================================
-def plot_true_trajectory(n_frames: int = 5, save_path: str = 'WB_files/outputs/rho_true_check.png'):
-    rho0 = make_true_initial_density()
-    traj = [rho0.detach()]
-
-    rho = rho0
-    for step in range(n_frames):
-        with torch.no_grad():
-            rho = evolve_density(rho, t=step * DT)
-        traj.append(rho.detach())
-
-    # Also compute images for each frame
-    images = []
-    for rho_t in traj:
-        with torch.no_grad():
-            images.append(optical_model(rho_t).detach())
-
-    T_plus_1 = len(traj)
-    fig, axes = plt.subplots(3, T_plus_1, figsize=(4 * T_plus_1, 12))
-    fig.suptitle(f'True density trajectory — {T_plus_1} frames\n'
-                 f'N_SUBSTEPS={N_SUBSTEPS}, dt_img={_dye_cfg.dt}s, '
-                 f'physical time per frame = {N_SUBSTEPS * _dye_cfg.dt:.2f}s',
-                 fontsize=11, fontweight='bold')
-
-    extent = [-TANK_WIDTH/2, TANK_WIDTH/2, -TANK_HEIGHT/2, TANK_HEIGHT/2]
-
-    # Shared colour scale for images across all frames
-    all_img_vals = torch.cat([im.flatten() for im in images])
-    vmin_img = float(all_img_vals.min())
-    vmax_img = float(all_img_vals.max())
-    for t in range(1, T_plus_1):
-        img_diff = (images[t] - images[t-1]).abs().mean().item()
-        print(f'Image change t={t-1}→{t}: {img_diff:.6f}')
-    for t, (rho_t, img_t) in enumerate(zip(traj, images)):
-        arr = rho_t.numpy()
-
-        # Row 1: density field
-        im = axes[0, t].imshow(arr.T, origin='lower', cmap='viridis',
-                                aspect='auto', extent=extent, vmin=0, vmax=1)
-        axes[0, t].set_title(f't={t}\n({t * N_SUBSTEPS * _dye_cfg.dt:.2f}s)',
-                              fontsize=9, fontweight='bold')
-        axes[0, t].set_xlabel('x (m)', fontsize=7)
-        axes[0, t].set_ylabel('z (m)', fontsize=7)
-        axes[0, t].axhline(0, color='white', lw=0.8, ls='--', alpha=0.5)
-        if t == T_plus_1 - 1:
-            plt.colorbar(im, ax=axes[0, t], fraction=0.046)
-
-        # Row 2: difference from t=0
-        diff = (rho_t - traj[0]).numpy()
-        vmax = max(abs(diff.max()), abs(diff.min()), 0.01)
-        im2 = axes[1, t].imshow(diff.T, origin='lower', cmap='RdBu_r',
-                                 aspect='auto', extent=extent,
-                                 vmin=-vmax, vmax=vmax)
-        axes[1, t].set_title(f'Δrho vs t=0\nmean|Δ|={abs(diff).mean():.4f}',
-                              fontsize=9, fontweight='bold')
-        axes[1, t].set_xlabel('x (m)', fontsize=7)
-        axes[1, t].set_ylabel('z (m)', fontsize=7)
-        axes[1, t].axhline(0, color='black', lw=0.8, ls='--', alpha=0.5)
-        if t == T_plus_1 - 1:
-            plt.colorbar(im2, ax=axes[1, t], fraction=0.046)
-
-        # Row 3: observed image from optical model
-        im3 = axes[2, t].imshow(img_t.numpy().T, origin='lower', cmap='inferno',
-                                  aspect='auto', extent=extent,
-                                  vmin=vmin_img, vmax=vmax_img)
-        axes[2, t].set_title(f'Observed b\nmax={img_t.max():.4f}',
-                              fontsize=9, fontweight='bold')
-        axes[2, t].set_xlabel('x (m)', fontsize=7)
-        axes[2, t].set_ylabel('z (m)', fontsize=7)
-        axes[2, t].axhline(0, color='white', lw=0.8, ls='--', alpha=0.5)
-        if t == T_plus_1 - 1:
-            plt.colorbar(im3, ax=axes[2, t], fraction=0.046)
-
-    plt.tight_layout()
-    fig.savefig(save_path, dpi=140, bbox_inches='tight')
-    print(f'Saved: {save_path}')
-    print(f'Mean changes per frame:')
-    for t in range(1, T_plus_1):
-        diff = (traj[t] - traj[t-1]).abs().mean().item()
-        print(f'  t={t-1}→{t}: {diff:.6f}  '
-              f'(cumulative from t=0: {(traj[t]-traj[0]).abs().mean().item():.6f})')
-    print(f'\nImage intensity range: [{vmin_img:.6f}, {vmax_img:.6f}]')
-    print(f'Suggested SIGMA_OBS: {vmax_img / 10:.6f}')
 
 if __name__ == '__main__':
 
     print('='*60)
     print('Illuminati Ltd. — HMC Density Field Inference v2')
     print('='*60)
-    plot_true_trajectory(n_frames=4)
-    test_evolution_model()
     test_optical_model()
     b_obs_seq, rho_true_seq = generate_synthetic_sequence(n_frames=2)
     pot = Potential(b_obs_seq, make_prior_density())
@@ -1450,19 +1296,19 @@ if __name__ == '__main__':
     print('\n[2] Running HMC sampler...')
     sampler = HMCSampler(
         b_obs_sequence = b_obs_sequence,
-        n_samples  = 10,    # increase for production
-        n_warmup   = 10,     # increase for production
-        min_step   = 0.003,  # tune: target accept rate 0.60-0.80
-        max_step   = 0.009,
-        min_traj   = 10,      # 10 tune: longer = better mixing, more compute
-        max_traj   = 20,        #20
+        n_samples  = 50,    # increase for production
+        n_warmup   = 50,     # increase for production
+        min_step   = 0.001,  # tune: target accept rate 0.60-0.80
+        max_step   = 0.003,
+        min_traj   = 5,      # tune: longer = better mixing, more compute
+        max_traj   = 10,
     )
     results = sampler.run_sampler()
 
     # ── Step 3: Plot diagnostics ──────────────────────────────────────────
     print('\n[3] Plotting diagnostics...')
     plot_results(results, b_obs_sequence, rho_true_sequence,
-                 save_path='WB_files/outputs/hmc_v2_results.png')
+                 save_path='hmc_v2_results.png')
 
     # ── Step 4: Summary ───────────────────────────────────────────────────
     print('\n[4] Summary')

@@ -45,7 +45,7 @@ import numpy as np
 
 # %%
 # laser fan parameters
-NUMBER_OF_RAYS = 40 #total rays 
+NUMBER_OF_RAYS = 60 #total rays 
 FAN_HALF_ANGLE_DEG = 45 
 FAN_HALF_ANGLE = np.deg2rad(FAN_HALF_ANGLE_DEG) #half fan angle in radians
 
@@ -548,7 +548,7 @@ def geometry(grid, tank_width, tank_height):
     rays = add_s_exit(rays, tank_width, tank_height)
     segments = compute_ray_segments(rays, grid)
 
-    subrays = build_subrays_from_rays(rays, grid, n_subrays=1)
+    subrays = build_subrays_from_rays(rays, grid, n_subrays=3)
     subrays = add_s_exit(subrays, tank_width, tank_height)
     subray_segments = compute_ray_segments(subrays, grid)
 
