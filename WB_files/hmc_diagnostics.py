@@ -74,8 +74,8 @@ print(f"Test image min: {test_image.min():.6f}")
 # =============================================================================
 
 N_FRAMES   = 4       # matches your main run (3 frames total)
-N_SAMPLES  = 100
-N_WARMUP   = 30    # enough warmup for tanh initialisation
+N_SAMPLES  = 300
+N_WARMUP   = 100    # enough warmup for tanh initialisation
 MIN_STEP   = 0.002
 MAX_STEP   = 0.007
 MIN_TRAJ   = 10
