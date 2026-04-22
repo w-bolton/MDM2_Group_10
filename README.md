@@ -9,3 +9,5 @@ The WB_files folder contains the code relating to the Hamiltonian Monte Carlo me
 The qusais_files folder contains the code for the creation of the optical model.
 
 The zachs_files folder contains the code for the gradient descent method of optimisation.
+
+The manim.py file contains the code for creating some of the animations on our presentation.
