@@ -2,7 +2,7 @@
 ---
 __This Github repository contains all code used to generate images and results in our project. Below is a breakdown of how each folder is sorted:__
 
-The Hongze_File folder contains all code used in order to generate results for the evolution model.
+The Hongze_File folder contains the code used in order to generate results for the evolution model.
 
 The WB_files folder contains the code relating to the Hamiltonian Monte Carlo method of optimisation.
 
