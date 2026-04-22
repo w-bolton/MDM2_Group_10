@@ -1,6 +1,6 @@
 # Mdm2_Group_10
 ---
-__This Github repository contains all code used to generate images and results in our project.__
+__This Github repository contains all code used to generate images and results in our project. Below is a breakdown of how each folder is sorted:__
 
 The Hongze_File folder contains all code used in order to generate results for the evolution model.
 
